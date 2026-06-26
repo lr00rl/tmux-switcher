@@ -100,9 +100,9 @@ do_menu() {
     "$SELF" list "$default_view" | "$fzf" \
       --ansi --delimiter=$'\t' --with-nth=2.. --nth=1 --cycle \
       --layout=reverse --prompt="${default_view}> " \
-      --header='ctrl-s tree · ctrl-r recent · ctrl-i need-input · alt-p preview · S-↑/↓ PgUp/PgDn scroll · Enter switch' \
+      --header='ctrl-t tree · ctrl-r recent · ctrl-i need-input · alt-p preview · S-↑/↓ PgUp/PgDn scroll · Enter switch' \
       --preview="$SELF preview {1}" --preview-window="$preview_win" \
-      --bind="ctrl-s:reload($SELF list tree)+change-prompt(tree> )" \
+      --bind="ctrl-t:reload($SELF list tree)+change-prompt(tree> )" \
       --bind="ctrl-r:reload($SELF list recent)+change-prompt(recent> )" \
       --bind="ctrl-i:reload($SELF list needinput)+change-prompt(need-input> )" \
       --bind='alt-p:toggle-preview' \

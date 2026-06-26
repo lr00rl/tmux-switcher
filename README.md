@@ -48,7 +48,7 @@ run-shell ~/.tmux/plugins/tmux-switcher/tmux-switcher.tmux   # or add to tmux.co
 | Key | Action |
 |-----|--------|
 | type | fuzzy search the window **title** |
-| `ctrl-s` | session **tree** view |
+| `ctrl-t` | session **tree** view |
 | `ctrl-r` | **recent** (MRU) view |
 | `ctrl-i` | **need-input** view (waiting panes only) |
 | `alt-p` | toggle preview |
