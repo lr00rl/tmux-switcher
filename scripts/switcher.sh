@@ -30,6 +30,17 @@ opt() {  # opt <option> <default>
 
 # ANSI (tmux -F / printf emit literally; fzf --ansi renders)
 C=$'\033[1;36m'; Y=$'\033[33m'; G=$'\033[1;32m'; M=$'\033[1;35m'; D=$'\033[2m'; R=$'\033[0m'
+SEP=$'\037'
+
+short_path() {  # short_path <path> -> compact display path
+  local p="${1:-}" home_prefix
+  home_prefix="${HOME%/}/"
+  case "$p" in
+    "$HOME") printf '~' ;;
+    "$home_prefix"*) printf '~/%s' "${p#$home_prefix}" ;;
+    *) printf '%s' "$p" ;;
+  esac
+}
 
 # ---- shared view/expand state (VIEW: tree|recent|needinput, EXPAND: 0|1) -----
 VIEW=tree; EXPAND=0
@@ -51,28 +62,67 @@ write_state() { [ -n "${SW_STATE:-}" ] && printf '%s\n%s\n' "$VIEW" "$EXPAND" > 
 # search keeps a window and its panes together, and a pane-title search finds it.
 
 win_row() {  # $1 = sess:win  -> one window row (active pane drives the meta)
-  tmux display-message -p -t "$1" \
-    "$1"$'\t'"#{window_name}"$'\t'"${Y}#{window_index}${R} ${D}#{window_panes}p · #{pane_current_command} · #{pane_current_path}${R}" 2>/dev/null
+  local target="$1" info name idx panes cmd cur_path
+  info="$(tmux display-message -p -t "$target" \
+    "#{window_name}${SEP}#{window_index}${SEP}#{window_panes}${SEP}#{pane_current_command}${SEP}#{pane_current_path}" 2>/dev/null)" || return 0
+  IFS="$SEP" read -r name idx panes cmd cur_path <<< "$info"
+  printf '%s\t%s\t%s%s%s %s%s · %s · %s%s\n' \
+    "$target" "$name" "$Y" "$idx" "$R" "$D" "${panes}p" "$cmd" "$(short_path "$cur_path")" "$R"
 }
 
-pane_rows() {  # $1 = sess:win  -> one row per pane, nested/indented
-  tmux list-panes -t "$1" -F \
-    "$1.#{pane_index}"$'\t'"  ${D}└ #{window_name}/${R}#{pane_index} #{pane_title}"$'\t'"${D}#{pane_current_command} · #{pane_current_path}${R}" 2>/dev/null
+tree_win_row() {  # $1 = sess:win, $2 = visual tree prefix
+  local target="$1" prefix="$2" info name idx panes cmd cur_path
+  info="$(tmux display-message -p -t "$target" \
+    "#{window_name}${SEP}#{window_index}${SEP}#{window_panes}${SEP}#{pane_current_command}${SEP}#{pane_current_path}" 2>/dev/null)" || return 0
+  IFS="$SEP" read -r name idx panes cmd cur_path <<< "$info"
+  printf '%s\t%s%s%s %s\t%s%s%s %s%s · %s · %s%s\n' \
+    "$target" "$D" "$prefix" "$R" "$name" "$Y" "$idx" "$R" "$D" "${panes}p" "$cmd" "$(short_path "$cur_path")" "$R"
+}
+
+pane_rows() {  # $1 = sess:win, $2 = tree stem, $3 = include window name (0/1)
+  local target="$1" stem="${2:-  }" include_window="${3:-1}"
+  local total i idx title cmd cur_path win_name branch pane_label label
+  total="$(tmux list-panes -t "$target" -F x 2>/dev/null | wc -l | tr -d ' ')"
+  [ "${total:-0}" -gt 0 ] || return 0
+  i=0
+  tmux list-panes -t "$target" -F \
+    "#{pane_index}${SEP}#{pane_title}${SEP}#{pane_current_command}${SEP}#{pane_current_path}${SEP}#{window_name}" 2>/dev/null |
+    while IFS="$SEP" read -r idx title cmd cur_path win_name; do
+      i=$((i + 1))
+      if [ "$i" -eq "$total" ]; then branch="└─"; else branch="├─"; fi
+      if [ -n "$title" ]; then
+        pane_label="${idx} ${title}"
+      else
+        pane_label="${idx} ${cmd}"
+      fi
+      if [ "$include_window" = 1 ]; then
+        label="${win_name}/${pane_label}"
+      else
+        label="$pane_label"
+      fi
+      printf '%s.%s\t%s%s%s %s\t%s%s · %s%s\n' \
+        "$target" "$idx" "$D" "${stem}${branch}" "$R" "$label" "$D" "$cmd" "$(short_path "$cur_path")" "$R"
+    done
 }
 
 list_tree() {  # $1 = expand
-  local expand="$1" s wc t
+  local expand="$1" s wc t i win_prefix pane_stem
   tmux list-sessions -F '#{session_name}' 2>/dev/null | while IFS= read -r s; do
     wc="$(tmux list-windows -t "$s" -F x 2>/dev/null | wc -l | tr -d ' ')"
-    printf '__hdr__:%s\t%s▸ %s%s\t%s%s windows%s\n' "$s" "$C" "$s" "$R" "$D" "$wc" "$R"
-    if [ "$expand" = 1 ]; then
-      tmux list-windows -t "$s" -F '#{session_name}:#{window_index}' 2>/dev/null | while IFS= read -r t; do
-        win_row "$t"; pane_rows "$t"
-      done
-    else
-      tmux list-windows -t "$s" -F \
-        "#{session_name}:#{window_index}"$'\t'"#{window_name}"$'\t'"${Y}#{window_index}${R} ${D}#{window_panes}p · #{pane_current_command} · #{pane_current_path}${R}" 2>/dev/null
-    fi
+    printf '__hdr__:%s\t%s▾ %s%s\t%s%s windows%s\n' "$s" "$C" "$s" "$R" "$D" "$wc" "$R"
+    i=0
+    tmux list-windows -t "$s" -F '#{session_name}:#{window_index}' 2>/dev/null | while IFS= read -r t; do
+      i=$((i + 1))
+      if [ "$i" -eq "$wc" ]; then
+        win_prefix="  └─"; pane_stem="     "
+      else
+        win_prefix="  ├─"; pane_stem="  │  "
+      fi
+      tree_win_row "$t" "$win_prefix"
+      if [ "$expand" = 1 ]; then
+        pane_rows "$t" "$pane_stem" 0
+      fi
+    done
   done
 }
 
