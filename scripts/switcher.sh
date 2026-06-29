@@ -218,7 +218,7 @@ cmd_set_view() {  # fzf transform: switch view, reload, repoint prompt
   read_state
   VIEW="${1:-tree}"; case "$VIEW" in tree|recent|needinput) ;; *) VIEW=tree ;; esac
   write_state
-  printf 'reload-sync(%s list)+change-prompt(%s)' "$SELF" "$(_prompt)"
+  printf 'reload-sync(%s list)+change-prompt(%s)+pos(1)' "$SELF" "$(_prompt)"
 }
 
 cmd_toggle_expand() {  # fzf transform: flip expand, keep cursor on the window
@@ -262,10 +262,11 @@ do_menu() {
   SW_STATE="$(mktemp "${STATE_DIR}/.sw.XXXXXX")"; export SW_STATE
   write_state
 
-  # recent opens with the cursor on row 2 (row 1 is the current window). --sync
-  # is required so the list is loaded before 'start' fires.
+  # Recent opens with the cursor on row 2 (row 1 is the current window), but
+  # only on initial popup open. View switches and query changes reset to row 1.
+  # --sync is required so the list is loaded before 'start' fires.
   start_bind=""
-  [ "$VIEW" = recent ] && start_bind="--sync --bind=start:down"
+  [ "$VIEW" = recent ] && start_bind="--sync --bind=start:pos(2)"
   # sort: relevance when collapsed; preserve window/pane grouping when expanded
   sort_flag=""; [ "$EXPAND" = 1 ] && sort_flag="--no-sort"
 
@@ -275,6 +276,7 @@ do_menu() {
       --layout=reverse --prompt="$(_prompt)" \
       --header='C-t tree · C-r recent · C-i need-input · C-e expand/collapse panes · A-p preview · S-↑/↓ PgUp/Dn scroll · Enter switch' \
       --preview="$SELF preview {1}" --preview-window="$preview_win" \
+      --bind='change:pos(1)' \
       --bind="ctrl-t:transform($SELF set-view tree)" \
       --bind="ctrl-r:transform($SELF set-view recent)" \
       --bind="ctrl-i:transform($SELF set-view needinput)" \
