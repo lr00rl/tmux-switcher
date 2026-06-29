@@ -215,10 +215,13 @@ _prompt() {  # echo "label[+]> " for current VIEW/EXPAND
 }
 
 cmd_set_view() {  # fzf transform: switch view, reload, repoint prompt
+  local pos
   read_state
   VIEW="${1:-tree}"; case "$VIEW" in tree|recent|needinput) ;; *) VIEW=tree ;; esac
   write_state
-  printf 'reload-sync(%s list)+change-prompt(%s)+pos(1)' "$SELF" "$(_prompt)"
+  pos=1
+  [ "$VIEW" = recent ] && pos=2
+  printf 'reload-sync(%s list)+change-prompt(%s)+pos(%s)' "$SELF" "$(_prompt)" "$pos"
 }
 
 cmd_toggle_expand() {  # fzf transform: flip expand, keep cursor on the window
@@ -262,8 +265,9 @@ do_menu() {
   SW_STATE="$(mktemp "${STATE_DIR}/.sw.XXXXXX")"; export SW_STATE
   write_state
 
-  # Recent opens with the cursor on row 2 (row 1 is the current window), but
-  # only on initial popup open. View switches and query changes reset to row 1.
+  # Recent opens with the cursor on row 2 (row 1 is the current window), both
+  # on initial popup open and when switching back into the recent view.
+  # Tree/need-input view switches and query changes reset to row 1.
   # --sync is required so the list is loaded before 'start' fires.
   start_bind=""
   [ "$VIEW" = recent ] && start_bind="--sync --bind=start:pos(2)"
