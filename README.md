@@ -53,7 +53,7 @@ run-shell ~/.tmux/plugins/tmux-switcher/tmux-switcher.tmux   # or add to tmux.co
 | type | fuzzy search **window + pane title** |
 | `ctrl-t` | session **tree** view |
 | `ctrl-r` | **recent** (MRU) view |
-| `ctrl-i` | **need-input** view (waiting panes only) |
+| `ctrl-i` | **need-input** view (all detected AI panes; hook-marked panes float first) |
 | `ctrl-e` | **expand / collapse panes** (nest panes under each window) |
 | `alt-p` | toggle preview |
 | `shift-↑` / `shift-↓` | scroll preview by line |
@@ -61,11 +61,12 @@ run-shell ~/.tmux/plugins/tmux-switcher/tmux-switcher.tmux   # or add to tmux.co
 | `ctrl-n` / `ctrl-p` | move selection (fzf default) |
 | `Enter` | switch to the window (or pane, when a pane row is selected) |
 
-**Pane level.** Each view starts at window granularity. Press `ctrl-e` to expand
-panes nested under their window (works in tree / recent / need-input); press it
-again to collapse. The cursor stays on the same window group across the toggle.
-When expanded, search matches **both** window and pane titles and keeps the
-window→pane grouping (only matching rows are shown).
+**Pane level.** Tree and recent start at window granularity. Press `ctrl-e` to
+expand panes nested under their window; press it again to collapse. The cursor
+stays on the same window group across the toggle. When expanded, search matches
+**both** window and pane titles and keeps the window→pane grouping (only matching
+rows are shown). The need-input view is always pane-level so you can jump to the
+exact AI TUI pane.
 
 ## Configuration
 
@@ -81,6 +82,7 @@ Set these **before** the plugin loads:
 | `@switcher-preview` | `right:62%` | fzf preview position/size. |
 | `@switcher-preview-follow` | `on` | Anchor preview to the bottom (tail-style). |
 | `@switcher-needinput` | `on` | Enable the need-input system (hooks/toast). |
+| `@switcher-needinput-commands` | `codex claude` | Process names the need-input view treats as AI panes. Comma/space/colon separated. |
 
 Example:
 
@@ -88,10 +90,17 @@ Example:
 set -g @switcher-default-view 'recent'
 set -g @switcher-key 'C-j'
 set -g @switcher-preview 'right:55%'
+set -g @switcher-needinput-commands 'codex claude'
 set -g @plugin 'lr00rl/tmux-switcher'
 ```
 
-## Need-input alerts (Claude Code / Codex)
+## Need-input AI pane view + alerts (Claude Code / Codex)
+
+The `ctrl-i` view scans live tmux panes for configured AI processes, defaulting
+to `codex` and `claude`, and lists matching panes directly. Matching is based on
+the pane process tree and processes attached to the pane TTY, not on tmux window
+or pane names. Hook-marked panes are shown first and annotated with the hook
+message; unmarked AI panes remain visible for quick review.
 
 The plugin sets up the tmux side automatically (toast status line + clear on
 window focus). To let Claude Code and Codex flag their pane, install the hooks

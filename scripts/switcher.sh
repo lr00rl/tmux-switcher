@@ -42,6 +42,12 @@ short_path() {  # short_path <path> -> compact display path
   esac
 }
 
+needinput_commands() {  # newline-separated process names watched by need-input
+  local configured
+  configured="${TMUX_SWITCHER_NEEDINPUT_COMMANDS:-$(opt @switcher-needinput-commands 'codex claude')}"
+  printf '%s\n' "$configured" | tr ',:' '  '
+}
+
 # ---- shared view/expand state (VIEW: tree|recent|needinput, EXPAND: 0|1) -----
 VIEW=tree; EXPAND=0
 read_state() {  # read_state [view-override] [expand-override]
@@ -161,33 +167,127 @@ list_recent() {  # $1 = expand
   done <<< "$ordered"
 }
 
-list_needinput() {  # $1 = expand
-  local expand="$1" live
-  [ -r "$NEEDINPUT_FILE" ] || return 0
+list_needinput() {  # pane-level AI process view; hook-marked panes float first
+  local live flags ps_rows commands
   live="$(tmux list-panes -a -F \
-    '#{pane_id}'$'\t''#{session_name}:#{window_index}'$'\t''#{pane_index}'$'\t''#{window_name}'$'\t''#{pane_title}'$'\t''#{pane_current_command}'$'\t''#{pane_current_path}' 2>/dev/null)"
-  awk -F '\t' -v expand="$expand" -v M="$M" -v D="$D" -v R="$R" '
-    NR==FNR { wt[$1]=$2; pidx[$1]=$3; wn[$1]=$4; ti[$1]=$5; cm[$1]=$6; pa[$1]=$7; next }
-    {
-      pid=$1
-      if (!(pid in wt)) next                         # dead / not live -> skip
-      w=wt[pid]
-      if (!(w in seen)) { seen[w]=1; order[++n]=w; firstpid[w]=pid }
-      plist[w]=plist[w] pid "\n"
-    }
-    END {
-      for (i=1;i<=n;i++){
-        w=order[i]; fp=firstpid[w]
-        printf "%s\t%s⚠ %s%s\t%s%s · %s%s\n", w, M, wn[fp], R, D, cm[fp], pa[fp], R
-        if (expand=="1"){
-          c=split(plist[w], a, "\n")
-          for (k=1;k<=c;k++){ pid=a[k]; if(pid=="")continue
-            printf "%s.%s\t  %s└ %s/%s%s %s\t%s%s · %s%s\n", w, pidx[pid], D, wn[pid], R, pidx[pid], ti[pid], D, cm[pid], pa[pid], R
+    '#{pane_id}'$'\t''#{session_name}:#{window_index}'$'\t''#{pane_index}'$'\t''#{window_name}'$'\t''#{pane_title}'$'\t''#{pane_current_command}'$'\t''#{pane_current_path}'$'\t''#{pane_pid}'$'\t''#{pane_tty}' 2>/dev/null)"
+  [ -n "$live" ] || return 0
+  flags=""; [ -r "$NEEDINPUT_FILE" ] && flags="$(cat "$NEEDINPUT_FILE" 2>/dev/null || true)"
+  ps_rows="$(ps -axo pid=,ppid=,tty=,command= 2>/dev/null || true)"
+  commands="$(needinput_commands)"
+
+  { printf '__PANES__\n%s\n__FLAGS__\n%s\n__PS__\n%s\n' "$live" "$flags" "$ps_rows"; } |
+    awk -F '\t' -v cmds="$commands" -v C="$C" -v M="$M" -v D="$D" -v R="$R" '
+      function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+      function clean_tty(t) { sub(/^\/dev\//, "", t); return t }
+      function first_word(s, x) { x=trim(s); sub(/[[:space:]].*/, "", x); return x }
+      function proc_match(argv0, raw, n, a, i, c, wanted) {
+        raw=tolower(argv0); gsub(/\\/, "/", raw)
+        n=split(raw, a, "/")
+        for (wanted in want) {
+          for (i=1; i<=n; i++) {
+            c=a[i]
+            sub(/\.app$/, "", c)
+            if (c == wanted) return want[wanted]
+          }
+        }
+        return ""
+      }
+      function add_match(pane, cmd) {
+        if (pane == "" || cmd == "") return
+        if (!(pane in ai)) ai[pane]=1
+        ai_cmd[pane SUBSEP cmd]=1
+      }
+      function cmds_for(pane,    i, out, cmd) {
+        out=""
+        for (i=1; i<=cmd_n; i++) {
+          cmd=cmd_order[i]
+          if (ai_cmd[pane SUBSEP cmd]) out=(out == "" ? cmd : out "," cmd)
+        }
+        return out
+      }
+      function read_ps(line,    rest, pid, ppid, tty, argv0, matched) {
+        rest=trim(line)
+        pid=first_word(rest); sub(/^[^[:space:]]+[[:space:]]+/, "", rest)
+        ppid=first_word(rest); sub(/^[^[:space:]]+[[:space:]]+/, "", rest)
+        tty=clean_tty(first_word(rest)); sub(/^[^[:space:]]+[[:space:]]*/, "", rest)
+        argv0=first_word(rest)
+        proc_parent[pid]=ppid
+        proc_tty[pid]=tty
+        matched=proc_match(argv0)
+        if (matched != "") proc_cmd[pid]=matched
+      }
+      BEGIN {
+        cmd_n=split(cmds, raw_cmds, /[[:space:],:]+/)
+        for (i=1; i<=cmd_n; i++) {
+          c=tolower(raw_cmds[i])
+          if (c == "") continue
+          want[c]=raw_cmds[i]
+          cmd_order[++real_cmd_n]=raw_cmds[i]
+        }
+        cmd_n=real_cmd_n
+      }
+      $0 == "__PANES__" { mode="panes"; next }
+      $0 == "__FLAGS__" { mode="flags"; next }
+      $0 == "__PS__" { mode="ps"; next }
+      mode == "panes" && $0 != "" {
+        pane=$1
+        wt[pane]=$2; pidx[pane]=$3; wn[pane]=$4; ti[pane]=$5; cm[pane]=$6; pa[pane]=$7
+        pane_shell=$8; pane_tty[pane]=clean_tty($9)
+        pane_target[pane]=wt[pane] "." pidx[pane]
+        pane_by_pid[pane_shell]=pane
+        panes_on_tty[pane_tty[pane]]=panes_on_tty[pane_tty[pane]] pane "\034"
+        order[++n]=pane
+        next
+      }
+      mode == "flags" && $0 != "" {
+        flagged[$1]=1
+        flag_source[$1]=$3
+        flag_label[$1]=$4
+        next
+      }
+      mode == "ps" && $0 != "" { read_ps($0); next }
+      END {
+        for (pid in proc_cmd) {
+          tty=proc_tty[pid]
+          if (tty in panes_on_tty) {
+            c=split(panes_on_tty[tty], tty_panes, "\034")
+            for (i=1; i<=c; i++) add_match(tty_panes[i], proc_cmd[pid])
+          }
+
+          seen=""
+          cur=pid
+          for (hops=0; hops<80 && cur != ""; hops++) {
+            if (cur in pane_by_pid) { add_match(pane_by_pid[cur], proc_cmd[pid]); break }
+            if (index("\034" seen "\034", "\034" cur "\034") > 0) break
+            seen=seen "\034" cur
+            cur=proc_parent[cur]
+          }
+        }
+
+        for (pass=1; pass<=2; pass++) {
+          for (i=1; i<=n; i++) {
+            pane=order[i]
+            if (!(pane in ai)) continue
+            is_flagged=(pane in flagged)
+            if ((pass == 1 && !is_flagged) || (pass == 2 && is_flagged)) continue
+
+            mark=(is_flagged ? M "⚠ " R : "")
+            title=(ti[pane] != "" && ti[pane] != wn[pane] ? "/" ti[pane] : "")
+            matched=cmds_for(pane)
+            hint=""
+            if (is_flagged) {
+              hint=flag_label[pane]
+              if (flag_source[pane] != "") hint=flag_source[pane] ": " hint
+              if (hint != "") hint=" · " M hint R
+            }
+            printf "%s\t%s%s%s%s %s%s%s\t%s%s · %s · %s%s%s\n", \
+              pane_target[pane], mark, C, wt[pane] "." pidx[pane], R, wn[pane], title, R, \
+              D, matched, cm[pane], pa[pane], R, hint
           }
         }
       }
-    }
-  ' <(printf '%s\n' "$live") "$NEEDINPUT_FILE"
+    '
 }
 
 do_list() {  # do_list [view] [expand]
@@ -272,8 +372,9 @@ do_menu() {
   # --sync is required so the list is loaded before 'start' fires.
   start_bind=""
   [ "$VIEW" = recent ] && start_bind="--sync --bind=start:pos(2)"
-  # sort: relevance when collapsed; preserve window/pane grouping when expanded
-  sort_flag=""; [ "$EXPAND" = 1 ] && sort_flag="--no-sort"
+  # sort: relevance when collapsed; preserve window/pane grouping when expanded.
+  # need-input is already pane-level and floats hook-marked panes first.
+  sort_flag=""; { [ "$EXPAND" = 1 ] || [ "$VIEW" = needinput ]; } && sort_flag="--no-sort"
 
   selected="$(
     "$SELF" list | "$fzf" \
