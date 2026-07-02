@@ -102,18 +102,23 @@ _drop_rows() {  # _drop_rows <awk-condition-marking-rows-to-DROP> [extra -v args
   _rewrite "if ($cond) next" "$@"
 }
 
-# Recompute bar visibility: status 2 while any mark is off-screen, else status on.
+# Recompute bar visibility: status 2 while any mark is bar-visible, else status
+# on. A chip is bar-visible while its mark is off-screen AND younger than
+# @switcher-bar-ttl seconds (0 = show until handled); the mark itself persists
+# in the need-input view / pane title until actually cleared.
 _sync_bar() {
   have_tmux || return 0
-  local n=0
+  local n=0 barttl
+  barttl="$(opt @switcher-bar-ttl 60)"
   if [ -r "$STATE_FILE" ]; then
-    n="$(awk -F '\t' -v panes="$(_pane_map)" '
+    n="$(awk -F '\t' -v panes="$(_pane_map)" -v now="$(date +%s)" -v barttl="$barttl" '
       BEGIN {
         m = split(panes, pl, "\001")
         for (i = 1; i <= m; i++) { split(pl[i], f, " "); if (f[1] != "") { alive[f[1]] = 1; if (f[2] == 1) viewed[f[1]] = 1 } }
       }
       NF >= 4 {
         pane = $1
+        if (barttl + 0 > 0 && now - $2 > barttl + 0) next
         if (pane == "-") { c++; next }
         if ((pane in alive) && !(pane in viewed)) c++
       }
@@ -193,7 +198,7 @@ _json_field() {
 # Background session (dashboard/cloud/job): $CLAUDE_JOB_DIR set or $TMUX_PANE
 # unset -> paneless mark keyed by session_id, labelled with the project dir.
 _claude_target() {  # sets PANE / KEY / WHERE from hook json in $1
-  local json="$1" sid cwd
+  local json="$1" sid cwd ignore p
   sid="$(_json_field session_id "$json")"
   cwd="$(_json_field cwd "$json")"
   KEY=""; [ -n "$sid" ] && KEY="s:${sid}"
@@ -201,6 +206,16 @@ _claude_target() {  # sets PANE / KEY / WHERE from hook json in $1
   if [ -n "${CLAUDE_JOB_DIR:-}" ] || [ -z "${TMUX_PANE:-}" ]; then
     PANE="-"
     [ -n "$KEY" ] || KEY="bg:${WHERE:-unknown}"
+    # plugin-internal background sessions (claude-mem observers, SDK helpers,
+    # ...) live under these path prefixes — pure noise, don't track them
+    ignore="$(opt @switcher-claude-bg-ignore "$HOME/.claude:$HOME/.claude-mem")"
+    if [ -n "$cwd" ] && [ -n "$ignore" ]; then
+      IFS=':' read -ra _pfx <<< "$ignore"
+      for p in "${_pfx[@]}"; do
+        [ -n "$p" ] || continue
+        case "$cwd" in "$p"*) exit 0 ;; esac
+      done
+    fi
   else
     PANE="$TMUX_PANE"
   fi

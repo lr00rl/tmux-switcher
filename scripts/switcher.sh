@@ -198,6 +198,20 @@ list_needinput() {  # pane-level AI process view; hook-marked panes float first
         if (!(pane in ai)) ai[pane]=1
         ai_cmd[pane SUBSEP cmd]=1
       }
+      function emit_pane(pane, is_flagged,    mark, title, matched, hint) {
+        mark=(is_flagged ? M "⚠ " R : "")
+        title=(ti[pane] != "" && ti[pane] != wn[pane] ? "/" ti[pane] : "")
+        matched=cmds_for(pane)
+        hint=""
+        if (is_flagged) {
+          hint=flag_label[pane]
+          if (flag_source[pane] != "") hint=flag_source[pane] ": " hint
+          if (hint != "") hint=" · " M hint R
+        }
+        printf "%s\t%s%s%s%s %s%s%s\t%s%s · %s · %s%s%s\n", \
+          pane_target[pane], mark, C, wt[pane] "." pidx[pane], R, wn[pane], title, R, \
+          D, matched, cm[pane], pa[pane], R, hint
+      }
       function cmds_for(pane,    i, out, cmd) {
         out=""
         for (i=1; i<=cmd_n; i++) {
@@ -243,11 +257,13 @@ list_needinput() {  # pane-level AI process view; hook-marked panes float first
       mode == "flags" && $0 != "" {
         if ($1 == "-") {                     # paneless background-session mark
           bg_n++
+          bg_epoch[bg_n]=$2 + 0
           bg_src[bg_n]=$3
           bg_label[bg_n]=(NF >= 5 ? $5 : $4)
           next
         }
         flagged[$1]=1
+        flag_epoch[$1]=$2 + 0
         flag_source[$1]=$3
         flag_label[$1]=(NF >= 5 ? $5 : $4)
         next
@@ -275,34 +291,35 @@ list_needinput() {  # pane-level AI process view; hook-marked panes float first
         claude_pane=""
         for (i=1; i<=n; i++) { p=order[i]; if (ai_cmd[p SUBSEP "claude"]) { claude_pane=p; break } }
 
-        for (pass=1; pass<=3; pass++) {
-          if (pass == 2) {                   # paneless background marks, newest first
-            for (b=bg_n; b>=1; b--) {
-              tgt=(claude_pane != "" ? pane_target[claude_pane] : "__hdr__:bg")
-              printf "%s\t%s⚠%s %s\t%s%s · background session%s\n", \
-                tgt, M, R, bg_label[b], D, bg_src[b], R
-            }
-            continue
+        # needing input first: hook-marked panes (whether or not the ps scan
+        # recognised them) + background marks, merged, newest mark first
+        need_n=0
+        for (i=1; i<=n; i++) {
+          pane=order[i]
+          if (pane in flagged) { need_n++; ne[need_n]=flag_epoch[pane]; nk[need_n]="p"; nv[need_n]=pane }
+        }
+        for (b=1; b<=bg_n; b++) { need_n++; ne[need_n]=bg_epoch[b]; nk[need_n]="b"; nv[need_n]=b }
+        for (i=2; i<=need_n; i++) {          # insertion sort, epoch descending
+          e=ne[i]; k=nk[i]; v=nv[i]
+          for (j=i-1; j>=1 && ne[j] < e; j--) { ne[j+1]=ne[j]; nk[j+1]=nk[j]; nv[j+1]=nv[j] }
+          ne[j+1]=e; nk[j+1]=k; nv[j+1]=v
+        }
+        for (i=1; i<=need_n; i++) {
+          if (nk[i] == "b") {
+            b=nv[i]
+            tgt=(claude_pane != "" ? pane_target[claude_pane] : "__hdr__:bg")
+            printf "%s\t%s⚠%s %s\t%s%s · background session%s\n", \
+              tgt, M, R, bg_label[b], D, bg_src[b], R
+          } else {
+            emit_pane(nv[i], 1)
           }
-          for (i=1; i<=n; i++) {
-            pane=order[i]
-            if (!(pane in ai)) continue
-            is_flagged=(pane in flagged)
-            if ((pass == 1 && !is_flagged) || (pass == 3 && is_flagged)) continue
+        }
 
-            mark=(is_flagged ? M "⚠ " R : "")
-            title=(ti[pane] != "" && ti[pane] != wn[pane] ? "/" ti[pane] : "")
-            matched=cmds_for(pane)
-            hint=""
-            if (is_flagged) {
-              hint=flag_label[pane]
-              if (flag_source[pane] != "") hint=flag_source[pane] ": " hint
-              if (hint != "") hint=" · " M hint R
-            }
-            printf "%s\t%s%s%s%s %s%s%s\t%s%s · %s · %s%s%s\n", \
-              pane_target[pane], mark, C, wt[pane] "." pidx[pane], R, wn[pane], title, R, \
-              D, matched, cm[pane], pa[pane], R, hint
-          }
+        # then every other detected AI pane, in pane order
+        for (i=1; i<=n; i++) {
+          pane=order[i]
+          if (!(pane in ai) || (pane in flagged)) continue
+          emit_pane(pane, 0)
         }
       }
     '

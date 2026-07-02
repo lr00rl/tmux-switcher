@@ -90,6 +90,8 @@ Set these **before** the plugin loads:
 | `@switcher-needinput-commands` | `codex claude` | Process names the need-input view treats as AI panes. Comma/space/colon separated. |
 | `@switcher-retitle` | `on` | Rename a marked pane's title to `⚠ <reason>` (restored on clear). |
 | `@switcher-claude-bg` | `on` | Also track Claude sessions running outside tmux panes (background/dashboard/cloud). |
+| `@switcher-bar-ttl` | `60` | Seconds a chip stays on the bar before fading (`0` = until handled). The mark itself persists in the need-input view / pane title until cleared. |
+| `@switcher-claude-bg-ignore` | `~/.claude:~/.claude-mem` | Colon-separated path prefixes; background sessions whose cwd starts with one (plugin observers, SDK helpers) are not tracked. |
 
 Example:
 
@@ -106,8 +108,9 @@ set -g @plugin 'lr00rl/tmux-switcher'
 The `ctrl-i` view scans live tmux panes for configured AI processes, defaulting
 to `codex` and `claude`, and lists matching panes directly. Matching is based on
 the pane process tree and processes attached to the pane TTY, not on tmux window
-or pane names. Hook-marked panes are shown first and annotated with the hook
-message; unmarked AI panes remain visible for quick review.
+or pane names. Rows needing input come first — hook-marked panes and background
+session marks merged, newest mark first — followed by every other detected AI
+pane for quick review.
 
 The plugin sets up the tmux side automatically (need-input bar status line +
 clear on window focus). To let Claude Code and Codex flag their pane, install

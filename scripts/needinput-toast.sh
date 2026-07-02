@@ -16,6 +16,11 @@ STATE_DIR="${TMUX_SWITCHER_STATE_DIR:-$HOME/.local/state/tmux}"
 STATE_FILE="${TMUX_SWITCHER_NEEDINPUT_FILE:-$STATE_DIR/need-input}"
 MAX="${TMUX_SWITCHER_BAR_MAX:-3}"
 
+opt() {  # opt <option> <default>
+  local v; v="$(tmux show-option -gqv "$1" 2>/dev/null || true)"
+  if [ -n "$v" ]; then printf '%s' "$v"; else printf '%s' "$2"; fi
+}
+
 # Records joined with \001 (BSD awk rejects newlines in -v values).
 pane_map() {
   tmux list-panes -a -F \
@@ -26,7 +31,10 @@ pane_map() {
 case "${1:-render}" in
   render)
     [ -r "$STATE_FILE" ] || exit 0
-    out="$(awk -F '\t' -v max="$MAX" -v panes="$(pane_map)" '
+    # chips fade from the bar after @switcher-bar-ttl seconds (0 = persistent);
+    # the underlying mark stays in the need-input view until handled
+    out="$(awk -F '\t' -v max="$MAX" -v panes="$(pane_map)" \
+          -v now="$(date +%s)" -v barttl="$(opt @switcher-bar-ttl 60)" '
       BEGIN {
         n = split(panes, pl, "\001")
         for (i = 1; i <= n; i++) {
@@ -40,6 +48,7 @@ case "${1:-render}" in
       NF >= 4 {
         pane = $1
         label = (NF >= 5 ? $5 : $4)
+        if (barttl + 0 > 0 && now - $2 > barttl + 0) next
         if (pane == "-") { txt[++c] = label; next }
         if (!(pane in alive) || (pane in viewed)) next
         txt[++c] = label " · " where[pane]
